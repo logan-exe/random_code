@@ -1,0 +1,181 @@
+"use client"
+
+import React from "react"
+
+// Static data for initial rendering
+const initialData = {
+  columns: [
+    { name: "id", type: "number", originalName: null },
+    { name: "name", type: "string", originalName: null },
+    { name: "email", type: "string", originalName: null },
+    { name: "age", type: "number", originalName: null },
+    { name: "isActive", type: "boolean", originalName: null },
+    { name: "registrationDate", type: "date", originalName: null },
+    { name: "score", type: "number", originalName: null },
+    { name: "mixedField", type: "string", originalName: null },
+    { name: "booleanText", type: "string", originalName: null },
+    { name: "dateText", type: "string", originalName: null },
+  ],
+}
+
+export default function SchemaManager() {
+  const [columns, setColumns] = React.useState(initialData.columns)
+  const [editingIndex, setEditingIndex] = React.useState(-1)
+  const [editingName, setEditingName] = React.useState("")
+
+  // Start editing a column name
+  const startEditing = (index) => {
+    setEditingIndex(index)
+    setEditingName(columns[index].name)
+  }
+
+  // Cancel editing
+  const cancelEditing = () => {
+    setEditingIndex(-1)
+    setEditingName("")
+  }
+
+  // Save column name
+  const saveColumnName = (index) => {
+    if (editingName.trim() === "") {
+      cancelEditing()
+      return
+    }
+
+    // Check if name already exists
+    const nameExists = columns.some((col, i) => i !== index && col.name === editingName)
+    if (nameExists) {
+      alert(`Column name "${editingName}" already exists.`)
+      return
+    }
+
+    const newColumns = [...columns]
+    newColumns[index] = {
+      ...newColumns[index],
+      originalName: newColumns[index].originalName || newColumns[index].name,
+      name: editingName,
+    }
+
+    setColumns(newColumns)
+    cancelEditing()
+  }
+
+  // Change column type
+  const changeColumnType = (index, newType) => {
+    const newColumns = [...columns]
+    newColumns[index] = {
+      ...newColumns[index],
+      type: newType,
+    }
+    setColumns(newColumns)
+  }
+
+  // Apply changes (in a real app, this would update the data)
+  const applyChanges = () => {
+    alert("Changes applied!")
+  }
+
+  // Reset changes
+  const resetChanges = () => {
+    setColumns(initialData.columns)
+    cancelEditing()
+  }
+
+  return (
+    <div style={{ padding: "20px", maxWidth: "1000px", margin: "0 auto" }}>
+      <h1 style={{ fontSize: "24px", marginBottom: "20px" }}>Schema Management</h1>
+
+      <div style={{ marginBottom: "20px", display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+        <button
+          onClick={resetChanges}
+          style={{ padding: "8px 16px", border: "1px solid #ccc", borderRadius: "4px", background: "#fff" }}
+        >
+          Reset
+        </button>
+        <button
+          onClick={applyChanges}
+          style={{ padding: "8px 16px", background: "#3b82f6", color: "white", border: "none", borderRadius: "4px" }}
+        >
+          Apply Changes
+        </button>
+      </div>
+
+      <table style={{ width: "100%", borderCollapse: "collapse", border: "1px solid #e5e7eb" }}>
+        <thead>
+          <tr style={{ background: "#f9fafb" }}>
+            <th style={{ padding: "12px", textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>Column Name</th>
+            <th style={{ padding: "12px", textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>Data Type</th>
+            <th style={{ padding: "12px", textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {columns.map((column, index) => (
+            <tr key={index} style={{ borderBottom: "1px solid #e5e7eb" }}>
+              <td style={{ padding: "12px" }}>
+                {editingIndex === index ? (
+                  <div style={{ display: "flex", alignItems: "center" }}>
+                    <input
+                      type="text"
+                      value={editingName}
+                      onChange={(e) => setEditingName(e.target.value)}
+                      style={{ padding: "4px 8px", border: "1px solid #d1d5db", borderRadius: "4px", width: "100%" }}
+                    />
+                    <button
+                      onClick={() => saveColumnName(index)}
+                      style={{
+                        marginLeft: "8px",
+                        color: "green",
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                      }}
+                      title="Save"
+                    >
+                      ✓
+                    </button>
+                    <button
+                      onClick={cancelEditing}
+                      style={{ marginLeft: "4px", color: "red", background: "none", border: "none", cursor: "pointer" }}
+                      title="Cancel"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ) : (
+                  <div onClick={() => startEditing(index)} style={{ cursor: "pointer", color: "#4b5563" }}>
+                    {column.name}
+                    {column.originalName && column.originalName !== column.name && (
+                      <span style={{ fontSize: "12px", color: "#6b7280", marginLeft: "4px" }}>
+                        (was: {column.originalName})
+                      </span>
+                    )}
+                  </div>
+                )}
+              </td>
+              <td style={{ padding: "12px" }}>
+                <select
+                  value={column.type}
+                  onChange={(e) => changeColumnType(index, e.target.value)}
+                  style={{ padding: "4px 8px", border: "1px solid #d1d5db", borderRadius: "4px", width: "100%" }}
+                >
+                  <option value="string">string</option>
+                  <option value="number">number</option>
+                  <option value="boolean">boolean</option>
+                  <option value="date">date</option>
+                </select>
+              </td>
+              <td style={{ padding: "12px" }}>
+                <button
+                  onClick={() => startEditing(index)}
+                  style={{ color: "#3b82f6", background: "none", border: "none", cursor: "pointer" }}
+                >
+                  Edit
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
