@@ -1,0 +1,137 @@
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
+
+/**
+ * Generate a professional PDF from specified DOM elements.
+ *
+ * @param {Object} options
+ * @param {string} options.title        - Title for the first page.
+ * @param {string} options.orientation  - 'portrait' or 'landscape'.
+ * @param {Array<Object>} options.widgetGroups - Array of groups: { tabId, tabName, widgetIds, widgetNames }.
+ * @param {string} [options.fileName='document.pdf'] - Output file name.
+ */
+export async function generatePDF({
+  title,
+  orientation = 'portrait',
+  widgetGroups = [],
+  fileName = 'document.pdf'
+}) {
+  // Initialize jsPDF
+  const pdf = new jsPDF({
+    orientation,
+    unit: 'pt',
+    format: 'a4'
+  });
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const bgColor = '#262626';
+  const textColor = '#FFFFFF';
+
+  // --- TITLE PAGE ---
+  pdf.setFillColor(bgColor);
+  pdf.rect(0, 0, pageWidth, pageHeight, 'F');
+  pdf.setTextColor(textColor);
+  pdf.setFontSize(36);
+  pdf.text(title, pageWidth / 2, pageHeight / 2, { align: 'center' });
+
+  // --- PLACEHOLDER FOR TOC ---
+  pdf.addPage();
+  // We'll come back to populate this page after content
+
+  // Track TOC entries
+  const tocEntries = [];
+
+  // --- ADD CONTENT GROUPS ---
+  for (const group of widgetGroups) {
+    const { tabId, tabName, widgetIds, widgetNames } = group;
+    // Start a new page for each tab section
+    pdf.addPage();
+    const startPage = pdf.getNumberOfPages();
+
+    // Register TOC entry
+    tocEntries.push({ title: tabName, page: startPage });
+
+    // Fill background
+    pdf.setFillColor(bgColor);
+    pdf.rect(0, 0, pageWidth, pageHeight, 'F');
+
+    // Tab header
+    pdf.setTextColor(textColor);
+    pdf.setFontSize(24);
+    pdf.text(tabName, 40, 60);
+
+    // Position tracker
+    let yOffset = 90;
+
+    // Render each widget
+    for (let i = 0; i < widgetIds.length; i++) {
+      const id = widgetIds[i];
+      const name = widgetNames[i] || '';
+      const el = document.getElementById(id);
+      if (!el) {
+        console.warn(`Element with ID \"${id}\" not found.`);
+        continue;
+      }
+      // Capture element as image
+      const canvas = await html2canvas(el, { backgroundColor: null });
+      const imgData = canvas.toDataURL('image/png');
+      const imgWidth = pageWidth - 80; // margins
+      const imgRatio = canvas.height / canvas.width;
+      const imgHeight = imgWidth * imgRatio;
+
+      // Check for page break
+      if (yOffset + imgHeight > pageHeight - 40) {
+        pdf.addPage();
+        pdf.setFillColor(bgColor);
+        pdf.rect(0, 0, pageWidth, pageHeight, 'F');
+        yOffset = 60;
+      }
+
+      // Widget title
+      if (name) {
+        pdf.setFontSize(14);
+        pdf.text(name, 40, yOffset);
+        yOffset += 20;
+      }
+
+      // Add image
+      pdf.addImage(imgData, 'PNG', 40, yOffset, imgWidth, imgHeight);
+      yOffset += imgHeight + 30;
+    }
+  }
+
+  // --- TABLE OF CONTENTS ---
+  pdf.setPage(2);
+  pdf.setFillColor(bgColor);
+  pdf.rect(0, 0, pageWidth, pageHeight, 'F');
+  pdf.setTextColor(textColor);
+  pdf.setFontSize(28);
+  pdf.text('Table of Contents', pageWidth / 2, 80, { align: 'center' });
+  pdf.setFontSize(14);
+  let tocY = 120;
+  tocEntries.forEach(entry => {
+    pdf.text(entry.title, 60, tocY);
+    pdf.text(`${entry.page}`, pageWidth - 60, tocY, { align: 'right' });
+    tocY += 24;
+  });
+
+  // --- PAGE NUMBERS ---
+  const totalPages = pdf.getNumberOfPages();
+  for (let p = 1; p <= totalPages; p++) {
+    pdf.setPage(p);
+    if (p > 1) { // Skip title page if desired
+      pdf.setFontSize(10);
+      pdf.text(
+        `Page ${p} of ${totalPages}`,
+        pageWidth - 60,
+        pageHeight - 30,
+        { align: 'right' }
+      );
+    }
+  }
+
+  // Save PDF
+  pdf.save(fileName);
+}
+
+export default generatePDF;
