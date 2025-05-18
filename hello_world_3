@@ -8,21 +8,23 @@ export async function generatePDF({
   const pdf = new jsPDF({ orientation, unit: 'pt', format: 'a4' });
   const pageW = pdf.internal.pageSize.getWidth();
   const pageH = pdf.internal.pageSize.getHeight();
+  const margin = 40;
+  const bottomMargin = 40;
   const bg = '#262626';
   const fg = '#FFFFFF';
 
-  // --- Title Page ---
+  // Title Page
   pdf.setFillColor(bg);
   pdf.rect(0, 0, pageW, pageH, 'F');
   pdf.setTextColor(fg);
   pdf.setFontSize(36);
   pdf.text(title, pageW / 2, pageH / 2, { align: 'center' });
 
-  // --- Placeholder for Table of Contents ---
+  // Placeholder for Table of Contents
   pdf.addPage();
   const toc = [];
 
-  // --- Iterate Tabs & Widgets ---
+  // Iterate through each tab and widget
   for (const [tabId, tabObj] of tabs) {
     const { tabTitle, dashboardItems } = tabObj;
     pdf.addPage();
@@ -34,14 +36,17 @@ export async function generatePDF({
     pdf.rect(0, 0, pageW, pageH, 'F');
     pdf.setTextColor(fg);
     pdf.setFontSize(24);
-    pdf.text(tabTitle, 40, 60);
+    pdf.text(tabTitle, margin, 60);
     let y = 90;
 
     for (const item of dashboardItems) {
       const key = item.widgetState?.key;
       const widgetTitle = item.widgetState?.title;
       const el = document.getElementById(key);
-      if (!el) { console.warn(`Missing element: ${key}`); continue; }
+      if (!el) {
+        console.warn(`Missing element: ${key}`);
+        continue;
+      }
 
       // Capture node as PNG via dom-to-image-more
       let dataUrl;
@@ -57,35 +62,42 @@ export async function generatePDF({
         continue;
       }
 
-      // Compute image dimensions
+      // Create image and wait for load
       const img = new Image();
       img.src = dataUrl;
       await new Promise(res => img.onload = res);
-      const imgW = pageW - 80;
-      const imgH = (imgH = imgW * (img.height / img.width));
 
-      // Page break if necessary
-      if (y + imgH > pageH - 40) {
+      // Compute scaling to fit within page
+      const maxW = pageW - margin * 2;
+      const maxH = pageH - y - bottomMargin;
+      const origW = img.width;
+      const origH = img.height;
+      const scale = Math.min(maxW / origW, maxH / origH, 1);
+      const finalW = origW * scale;
+      const finalH = origH * scale;
+
+      // Page break if not enough space
+      if (finalH > maxH) {
         pdf.addPage();
         pdf.setFillColor(bg);
         pdf.rect(0, 0, pageW, pageH, 'F');
-        y = 60;
+        y = margin;
       }
 
       // Widget title
       if (widgetTitle) {
         pdf.setFontSize(14);
-        pdf.text(widgetTitle, 40, y);
+        pdf.text(widgetTitle, margin, y);
         y += 20;
       }
 
       // Embed image
-      pdf.addImage(dataUrl, 'PNG', 40, y, imgW, imgH);
-      y += imgH + 30;
+      pdf.addImage(dataUrl, 'PNG', margin, y, finalW, finalH);
+      y += finalH + 30;
     }
   }
 
-  // --- Populate Table of Contents ---
+  // Populate Table of Contents on page 2
   pdf.setPage(2);
   pdf.setFillColor(bg);
   pdf.rect(0, 0, pageW, pageH, 'F');
@@ -94,20 +106,20 @@ export async function generatePDF({
   pdf.text('Table of Contents', pageW / 2, 80, { align: 'center' });
   pdf.setFontSize(14);
   let ty = 120;
-  toc.forEach(entry => {
-    pdf.text(entry.title, 60, ty);
-    pdf.text(`${entry.page}`, pageW - 60, ty, { align: 'right' });
+  for (const entry of toc) {
+    pdf.text(entry.title, margin, ty);
+    pdf.text(`${entry.page}`, pageW - margin, ty, { align: 'right' });
     ty += 24;
-  });
-
-  // --- Page Numbers ---
-  const totalPages = pdf.getNumberOfPages();
-  pdf.setFontSize(10).setTextColor(fg);
-  for (let p = 1; p <= totalPages; p++) {
-    pdf.setPage(p);
-    if (p > 1) pdf.text(`Page ${p - 1} of ${totalPages - 1}`, pageW - 60, pageH - 30, { align: 'right' });
   }
 
-  // --- Save PDF ---
+  // Page numbers (skip title page)
+  const total = pdf.getNumberOfPages();
+  pdf.setFontSize(10).setTextColor(fg);
+  for (let i = 2; i <= total; i++) {
+    pdf.setPage(i);
+    pdf.text(`Page ${i - 1} of ${total - 1}`, pageW - margin, pageH - bottomMargin, { align: 'right' });
+  }
+
+  // Save PDF
   pdf.save(fileName);
 }
