@@ -1,1 +1,140 @@
 
+export async function generatePDF({
+  title,
+  orientation = 'portrait',
+  tabs = [],
+  onTabClick = async () => {},
+  fileName = 'document.pdf',
+}) {
+  // Initialize PDF
+  const pdf = new jsPDF({ orientation, unit: 'pt', format: 'a4' });
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  const margin = 40;
+  const bottomMargin = 40;
+  const bg = '#262626';
+  const fg = '#FFFFFF';
+
+  // Title Page
+  pdf.setFillColor(bg);
+  pdf.rect(0, 0, pageW, pageH, 'F');
+  pdf.setTextColor(fg);
+  pdf.setFontSize(36);
+  pdf.text(title, pageW / 2, pageH / 2, { align: 'center' });
+
+  // Placeholder for Table of Contents
+  pdf.addPage();
+  const toc = [];
+
+  // Iterate through each tab
+  for (const [tabId, tabObj] of tabs) {
+    const { tabTitle, dashboardItems } = tabObj;
+
+    // Activate tab and wait
+    await onTabClick(tabId);
+    await new Promise(res => setTimeout(res, 2000));
+
+    // Start new page for this tab
+    pdf.addPage();
+    const sectionPage = pdf.getNumberOfPages();
+    toc.push({ title: tabTitle, page: sectionPage });
+
+    // Section header
+    pdf.setFillColor(bg);
+    pdf.rect(0, 0, pageW, pageH, 'F');
+    pdf.setTextColor(fg);
+    pdf.setFontSize(24);
+    pdf.text(tabTitle, margin, 60);
+    let y = 90;
+
+    // Render each widget
+    for (const item of dashboardItems) {
+      const key = item.widgetState?.key;
+      const widgetTitle = item.widgetState?.title;
+      const el = document.getElementById(key);
+      if (!el) {
+        console.warn(`Missing element: ${key}`);
+        continue;
+      }
+
+      // Capture with dom-to-image-more
+      let dataUrl;
+      try {
+        dataUrl = await domToImage.toPng(el, {
+          bgcolor: bg,
+          width: el.scrollWidth,
+          height: el.scrollHeight,
+          pixelRatio: 2,
+        });
+      } catch (err) {
+        console.error(`Error capturing ${key}:`, err);
+        continue;
+      }
+
+      // Load image to get dimensions
+      const img = new Image();
+      img.src = dataUrl;
+      await new Promise(res => (img.onload = res));
+      const origW = img.width;
+      const origH = img.height;
+
+      // Compute scale to fit current page
+      const maxW = pageW - margin * 2;
+      const maxH = pageH - y - bottomMargin;
+      const scale = Math.min(maxW / origW, maxH / origH, 1);
+      const finalW = origW * scale;
+      const finalH = origH * scale;
+
+      // Check space for title + image + padding
+      const titleSpace = widgetTitle ? 20 : 0;
+      const needed = titleSpace + finalH + 30;
+      if (y + needed > pageH - bottomMargin) {
+        // New page, draw header again
+        pdf.addPage();
+        pdf.setFillColor(bg);
+        pdf.rect(0, 0, pageW, pageH, 'F');
+        pdf.setTextColor(fg);
+        pdf.setFontSize(24);
+        pdf.text(tabTitle, margin, 60);
+        y = 90;
+      }
+
+      // Widget title
+      if (widgetTitle) {
+        pdf.setFontSize(14);
+        pdf.text(widgetTitle, margin, y);
+        y += 20;
+      }
+
+      // Embed image
+      pdf.addImage(dataUrl, 'PNG', margin, y, finalW, finalH);
+      y += finalH + 30;
+    }
+  }
+
+  // Populate Table of Contents on page 2
+  pdf.setPage(2);
+  pdf.setFillColor(bg);
+  pdf.rect(0, 0, pageW, pageH, 'F');
+  pdf.setTextColor(fg);
+  pdf.setFontSize(28);
+  pdf.text('Table of Contents', pageW / 2, 80, { align: 'center' });
+  pdf.setFontSize(14);
+  let ty = 120;
+  for (const entry of toc) {
+    pdf.text(entry.title, margin, ty);
+    pdf.text(`${entry.page}`, pageW - margin, ty, { align: 'right' });
+    ty += 24;
+  }
+
+  // Page numbers (skip title page)
+  const total = pdf.getNumberOfPages();
+  pdf.setFontSize(10).setTextColor(fg);
+  for (let i = 2; i <= total; i++) {
+    pdf.setPage(i);
+    pdf.text(`Page ${i - 1} of ${total - 1}`, pageW - margin, pageH - bottomMargin, { align: 'right' });
+  }
+
+  // Save PDF
+  pdf.save(fileName);
+}
