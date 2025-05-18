@@ -48,10 +48,19 @@ export async function generatePDF({
         continue;
       }
 
-      // Capture node as PNG via dom-to-image-more
+      // Capture node as high-res PNG via dom-to-image-more with pixelRatio
       let dataUrl;
       try {
         dataUrl = await domToImage.toPng(el, {
+          bgcolor: bg,
+          width: el.scrollWidth,
+          height: el.scrollHeight,
+          pixelRatio: 2,
+        });
+      } catch (err) {
+        console.error(`Error capturing ${key}:`, err);
+        continue;
+      }(el, {
           bgcolor: bg,
           width: el.scrollWidth,
           height: el.scrollHeight,
