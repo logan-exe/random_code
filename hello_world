@@ -2,19 +2,45 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
 /**
- * Helper: Clone and capture a hidden or styled element via html2canvas.
+ * Helper: Deep clone an element, including canvases and styles, for accurate capture.
  */
 async function captureElement(el) {
-  // Clone node for offscreen rendering
   const clone = el.cloneNode(true);
   clone.style.position = 'absolute';
   clone.style.top = '-9999px';
   clone.style.left = '-9999px';
   clone.style.display = 'block';
   clone.style.visibility = 'visible';
+
+  // Copy inline canvas content
+  const origCanvases = el.querySelectorAll('canvas');
+  const cloneCanvases = clone.querySelectorAll('canvas');
+  cloneCanvases.forEach((c, i) => {
+    const o = origCanvases[i];
+    try {
+      const dataURL = o.toDataURL();
+      const img = new Image();
+      img.src = dataURL;
+      img.onload = () => {
+        const ctx = c.getContext('2d');
+        ctx.clearRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, 0);
+      };
+    } catch (e) {
+      console.warn('Canvas copy failed', e);
+    }
+  });
+
   document.body.appendChild(clone);
   try {
-    const canvas = await html2canvas(clone, { backgroundColor: null });
+    const canvas = await html2canvas(clone, {
+      backgroundColor: null,
+      useCORS: true,
+      allowTaint: false,
+      windowWidth: clone.scrollWidth,
+      windowHeight: clone.scrollHeight,
+      scale: 2
+    });
     return canvas;
   } finally {
     document.body.removeChild(clone);
@@ -22,7 +48,7 @@ async function captureElement(el) {
 }
 
 /**
- * Generate a professional PDF from specified dashboard tabs.
+ * Generate a professional PDF from specified dashboard tabs, and download each widget as an image.
  *
  * @param {Object} options
  * @param {string} options.title        - Title for the first page.
@@ -36,62 +62,62 @@ export async function generatePDF({
   tabs = [],
   fileName = 'document.pdf',
 }) {
-  // Initialize jsPDF
-  const pdf = new jsPDF({
-    orientation,
-    unit: 'pt',
-    format: 'a4',
-  });
+  const pdf = new jsPDF({ orientation, unit: 'pt', format: 'a4' });
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
   const bgColor = '#262626';
   const textColor = '#FFFFFF';
 
-  // --- TITLE PAGE ---
+  // Title page
   pdf.setFillColor(bgColor);
   pdf.rect(0, 0, pageWidth, pageHeight, 'F');
   pdf.setTextColor(textColor);
   pdf.setFontSize(36);
   pdf.text(title, pageWidth / 2, pageHeight / 2, { align: 'center' });
 
-  // --- PLACEHOLDER FOR TOC ---
+  // TOC placeholder
   pdf.addPage();
   const tocEntries = [];
 
-  // --- ITERATE TABS ---
+  // Iterate through tabs
   for (const [tabId, tabObj] of tabs) {
     const { tabTitle, dashboardItems } = tabObj;
     pdf.addPage();
     const startPage = pdf.getNumberOfPages();
     tocEntries.push({ title: tabTitle, page: startPage });
 
-    // Background & header
+    // Draw background & header
     pdf.setFillColor(bgColor);
     pdf.rect(0, 0, pageWidth, pageHeight, 'F');
     pdf.setTextColor(textColor);
     pdf.setFontSize(24);
     pdf.text(tabTitle, 40, 60);
-
     let yOffset = 90;
 
-    // Render items
+    // Render each dashboard item
     for (const item of dashboardItems) {
       const key = item.widgetState?.key;
       const widgetTitle = item.widgetState?.title;
       const el = document.getElementById(key);
-      if (!el) {
-        console.warn(`Element with ID "${key}" not found.`);
-        continue;
-      }
+      if (!el) continue;
 
-      // Capture via clone to ensure visibility
+      // Capture element to canvas
       const canvas = await captureElement(el);
       const imgData = canvas.toDataURL('image/png');
-      const imgWidth = pageWidth - 80;
-      const imgRatio = canvas.height / canvas.width;
-      const imgHeight = imgWidth * imgRatio;
 
-      // Page break
+      // Trigger download of widget image
+      const link = document.createElement('a');
+      link.href = imgData;
+      link.download = `${key}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      // Calculate dimensions for PDF
+      const imgWidth = pageWidth - 80;
+      const imgHeight = imgWidth * canvas.height / canvas.width;
+
+      // Page break if overflow
       if (yOffset + imgHeight > pageHeight - 40) {
         pdf.addPage();
         pdf.setFillColor(bgColor);
@@ -99,19 +125,20 @@ export async function generatePDF({
         yOffset = 60;
       }
 
-      // Title above widget
+      // Add widget title
       if (widgetTitle) {
         pdf.setFontSize(14);
         pdf.text(widgetTitle, 40, yOffset);
         yOffset += 20;
       }
 
+      // Insert widget image
       pdf.addImage(imgData, 'PNG', 40, yOffset, imgWidth, imgHeight);
       yOffset += imgHeight + 30;
     }
   }
 
-  // --- TABLE OF CONTENTS ---
+  // Populate Table of Contents
   pdf.setPage(2);
   pdf.setFillColor(bgColor);
   pdf.rect(0, 0, pageWidth, pageHeight, 'F');
@@ -120,22 +147,20 @@ export async function generatePDF({
   pdf.text('Table of Contents', pageWidth / 2, 80, { align: 'center' });
   pdf.setFontSize(14);
   let tocY = 120;
-  tocEntries.forEach(entry => {
-    pdf.text(entry.title, 60, tocY);
-    pdf.text(`${entry.page}`, pageWidth - 60, tocY, { align: 'right' });
+  tocEntries.forEach(e => {
+    pdf.text(e.title, 60, tocY);
+    pdf.text(`${e.page}`, pageWidth - 60, tocY, { align: 'right' });
     tocY += 24;
   });
 
-  // --- PAGE NUMBERS ---
+  // Add page numbers
   const totalPages = pdf.getNumberOfPages();
-  for (let p = 1; p <= totalPages; p++) {
-    pdf.setPage(p);
-    if (p > 1) {
-      pdf.setFontSize(10);
-      pdf.text(`Page ${p} of ${totalPages}`, pageWidth - 60, pageHeight - 30, { align: 'right' });
-    }
+  for (let i = 1; i <= totalPages; i++) {
+    pdf.setPage(i);
+    if (i > 1) pdf.text(`Page ${i} of ${totalPages}`, pageWidth - 60, pageHeight - 30, { align: 'right' });
   }
 
+  // Save final PDF
   pdf.save(fileName);
 }
 
