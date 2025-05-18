@@ -4,113 +4,25 @@ export async function generatePDF({
   tabs = [],
   fileName = 'document.pdf',
 }) {
+  // Initialize PDF
   const pdf = new jsPDF({ orientation, unit: 'pt', format: 'a4' });
   const pageW = pdf.internal.pageSize.getWidth();
   const pageH = pdf.internal.pageSize.getHeight();
   const bg = '#262626';
   const fg = '#FFFFFF';
 
-  // Title page
+  // --- Title Page ---
   pdf.setFillColor(bg);
   pdf.rect(0, 0, pageW, pageH, 'F');
   pdf.setTextColor(fg);
   pdf.setFontSize(36);
   pdf.text(title, pageW / 2, pageH / 2, { align: 'center' });
 
-  // Placeholder for Table of Contents
+  // --- Placeholder for Table of Contents ---
   pdf.addPage();
   const toc = [];
 
-  // Helper: inline computed CSS styles
-  function inlineStyles(element) {
-    const cs = window.getComputedStyle(element);
-    for (let i = 0; i < cs.length; i++) {
-      const prop = cs[i];
-      element.style.setProperty(prop, cs.getPropertyValue(prop), cs.getPropertyPriority(prop));
-    }
-    Array.from(element.children).forEach(child => inlineStyles(child));
-  }
-
-  // Helper: inline <img> sources as data URIs
-  async function inlineImages(el) {
-    const imgs = Array.from(el.querySelectorAll('img'));
-    await Promise.all(imgs.map(async img => {
-      try {
-        const resp = await fetch(img.src, { mode: 'cors' });
-        const blob = await resp.blob();
-        const dataURL = await new Promise((res, rej) => {
-          const fr = new FileReader();
-          fr.onload = () => res(fr.result);
-          fr.onerror = rej;
-          fr.readAsDataURL(blob);
-        });
-        img.src = dataURL;
-      } catch (e) {
-        console.warn('Failed to inline image', img.src, e);
-      }
-    }));
-  }
-
-  // Helper: inline CSS background images
-  async function inlineBackgroundImages(el) {
-    const all = Array.from(el.querySelectorAll('*'));
-    await Promise.all(all.map(async node => {
-      const cs = window.getComputedStyle(node);
-      const bgImg = cs.getPropertyValue('background-image');
-      const urlMatch = bgImg.match(/url\(['"]?(.*?)['"]?\)/);
-      if (urlMatch && urlMatch[1]) {
-        try {
-          const resp = await fetch(urlMatch[1], { mode: 'cors' });
-          const blob = await resp.blob();
-          const dataURL = await new Promise((res, rej) => {
-            const fr = new FileReader();
-            fr.onload = () => res(fr.result);
-            fr.onerror = rej;
-            fr.readAsDataURL(blob);
-          });
-          node.style.backgroundImage = `url(${dataURL})`;
-        } catch (e) {
-          console.warn('Failed to inline background', urlMatch[1], e);
-        }
-      }
-    }));
-  }
-
-  // Capture element via SVG <foreignObject> -> canvas
-  async function captureElementNative(el) {
-    const rect = el.getBoundingClientRect();
-    const clone = el.cloneNode(true);
-    // Inline images and backgrounds to avoid CORS taint
-    await inlineImages(clone);
-    await inlineBackgroundImages(clone);
-    // Inline all computed styles
-    inlineStyles(clone);
-
-    const xml = new XMLSerializer().serializeToString(clone);
-    const svg = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="${rect.width}px" height="${rect.height}px">
-        <foreignObject width="100%" height="100%">${xml}</foreignObject>
-      </svg>`;
-    const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const img = new Image();
-    return new Promise((resolve, reject) => {
-      img.onload = () => {
-        URL.revokeObjectURL(url);
-        const canvas = document.createElement('canvas');
-        canvas.width = rect.width * 2;
-        canvas.height = rect.height * 2;
-        const ctx = canvas.getContext('2d');
-        ctx.scale(2, 2);
-        ctx.drawImage(img, 0, 0);
-        resolve(canvas);
-      };
-      img.onerror = e => { URL.revokeObjectURL(url); reject(e); };
-      img.src = url;
-    });
-  }
-
-  // Process each tab and its widgets
+  // --- Iterate Tabs & Widgets ---
   for (const [tabId, tabObj] of tabs) {
     const { tabTitle, dashboardItems } = tabObj;
     pdf.addPage();
@@ -127,38 +39,53 @@ export async function generatePDF({
 
     for (const item of dashboardItems) {
       const key = item.widgetState?.key;
+      const widgetTitle = item.widgetState?.title;
       const el = document.getElementById(key);
       if (!el) { console.warn(`Missing element: ${key}`); continue; }
 
-      // Capture to canvas safely
-      const canvas = await captureElementNative(el);
-      let dataURL;
+      // Capture node as PNG via dom-to-image-more
+      let dataUrl;
       try {
-        dataURL = canvas.toDataURL('image/png');
-      } catch (e) {
-        console.error('Canvas taint prevents export', e);
+        dataUrl = await domToImage.toPng(el, {
+          bgcolor: bg,
+          width: el.scrollWidth,
+          height: el.scrollHeight,
+          style: { transform: 'scale(2)', transformOrigin: 'top left' }
+        });
+      } catch (err) {
+        console.error(`Error capturing ${key}:`, err);
         continue;
       }
 
-      const w = pageW - 80;
-      const h = (w * canvas.height) / canvas.width;
-      if (y + h > pageH - 40) {
-        pdf.addPage(); y = 60;
+      // Compute image dimensions
+      const img = new Image();
+      img.src = dataUrl;
+      await new Promise(res => img.onload = res);
+      const imgW = pageW - 80;
+      const imgH = (imgH = imgW * (img.height / img.width));
+
+      // Page break if necessary
+      if (y + imgH > pageH - 40) {
+        pdf.addPage();
         pdf.setFillColor(bg);
         pdf.rect(0, 0, pageW, pageH, 'F');
+        y = 60;
       }
 
-      if (item.widgetState?.title) {
+      // Widget title
+      if (widgetTitle) {
         pdf.setFontSize(14);
-        pdf.text(item.widgetState.title, 40, y);
+        pdf.text(widgetTitle, 40, y);
         y += 20;
       }
-      pdf.addImage(dataURL, 'PNG', 40, y, w, h);
-      y += h + 30;
+
+      // Embed image
+      pdf.addImage(dataUrl, 'PNG', 40, y, imgW, imgH);
+      y += imgH + 30;
     }
   }
 
-  // Populate Table of Contents on page 2
+  // --- Populate Table of Contents ---
   pdf.setPage(2);
   pdf.setFillColor(bg);
   pdf.rect(0, 0, pageW, pageH, 'F');
@@ -167,19 +94,20 @@ export async function generatePDF({
   pdf.text('Table of Contents', pageW / 2, 80, { align: 'center' });
   pdf.setFontSize(14);
   let ty = 120;
-  toc.forEach(e => {
-    pdf.text(e.title, 60, ty);
-    pdf.text(`${e.page}`, pageW - 60, ty, { align: 'right' });
+  toc.forEach(entry => {
+    pdf.text(entry.title, 60, ty);
+    pdf.text(`${entry.page}`, pageW - 60, ty, { align: 'right' });
     ty += 24;
   });
 
-  // Add page numbers (skip title page)
-  const total = pdf.getNumberOfPages();
+  // --- Page Numbers ---
+  const totalPages = pdf.getNumberOfPages();
   pdf.setFontSize(10).setTextColor(fg);
-  for (let i = 2; i <= total; i++) {
-    pdf.setPage(i);
-    pdf.text(`Page ${i - 1} of ${total - 1}`, pageW - 60, pageH - 30, { align: 'right' });
+  for (let p = 1; p <= totalPages; p++) {
+    pdf.setPage(p);
+    if (p > 1) pdf.text(`Page ${p - 1} of ${totalPages - 1}`, pageW - 60, pageH - 30, { align: 'right' });
   }
 
+  // --- Save PDF ---
   pdf.save(fileName);
 }
