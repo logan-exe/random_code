@@ -1,127 +1,91 @@
-import React, { Component } from 'react';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+export async function generatePDF({
+  title,
+  orientation = 'portrait',
+  tabs = [],
+  onTabClick,
+  fileName = 'document.pdf',
+}) {
+  // Initialize jsPDF
+  const pdf = new jsPDF({ orientation, unit: 'pt', format: 'a4' });
+  const pw = pdf.internal.pageSize.getWidth();
+  const ph = pdf.internal.pageSize.getHeight();
+  const bg = '#262626';
+  const fg = '#FFFFFF';
 
-/**
- * PdfGenerator component: captures dashboard tabs and exports a polished PDF.
- */
-class PdfGenerator extends Component {
-  constructor(props) {
-    super(props);
-    this.generatePDF = this.generatePDF.bind(this);
-  }
+  // --- TITLE PAGE with required image ---
+  pdf.setFillColor(bg);
+  pdf.rect(0, 0, pw, ph, 'F');
+  const firstPageImg = require('../../image/pdf_first_page.png'); // changed: use require()
+  // Draw image to full page, fitting with margins
+  await new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const ratio = img.width / img.height;
+      let iw = pw - 80;
+      let ih = iw / ratio;
+      if (ih > ph - 80) { ih = ph - 80; iw = ih * ratio; }
+      pdf.addImage(img, 'PNG', (pw - iw) / 2, (ph - ih) / 2, iw, ih);
+      resolve();
+    };
+    img.onerror = reject;
+    img.src = firstPageImg;
+  });
 
-  /**
-   * Main entry: iterate tabs, capture each as image, build PDF with TOC.
-   * @param {Object} options
-   * @param {string} options.title        - Title for the first page.
-   * @param {string} options.orientation  - 'portrait' or 'landscape'.
-   * @param {Array} options.tabs          - Array of [tabId, { tabTitle }].
-   * @param {string} [options.fileName='document.pdf']
-   */
-  async generatePDF({ title, orientation = 'portrait', tabs = [], fileName = 'document.pdf' }) {
-    const pdf = new jsPDF({ orientation, unit: 'pt', format: 'a4' });
-    const pw = pdf.internal.pageSize.getWidth();
-    const ph = pdf.internal.pageSize.getHeight();
-    const bg = '#262626';
-    const fg = '#FFFFFF';
+  // --- TOC placeholder ---
+  pdf.addPage();
+  const toc = [];
 
-    // --- TITLE PAGE with custom image ---
-    pdf.setFillColor(bg);
-    pdf.rect(0, 0, pw, ph, 'F');
-    const img = await this.loadImage('../../image/pdf_first_page.png');
-    const ratio = img.width / img.height;
-    let iw = pw - 80;
-    let ih = iw / ratio;
-    if (ih > ph - 80) { ih = ph - 80; iw = ih * ratio; }
-    pdf.addImage(img, 'PNG', (pw - iw) / 2, (ph - ih) / 2, iw, ih);
+  // --- CAPTURE TABS ---
+  for (const [tabId, tabObj] of tabs) {
+    const { tabTitle } = tabObj;
+    await onTabClick(tabId);            // activate
+    await new Promise(res => setTimeout(res, 2000)); // wait for load
 
-    // --- PLACEHOLDER FOR TOC ---
+    const container = document.getElementById('__tb__');
+    if (!container) continue;
+
     pdf.addPage();
-    const toc = [];
+    const pageNum = pdf.getNumberOfPages();
+    toc.push({ title: tabTitle, page: pageNum });
 
-    // --- CAPTURE EACH TAB ---
-    for (const [tabId, tabObj] of tabs) {
-      const titleTxt = tabObj.tabTitle;
-      // Trigger dashboard tab
-      await this.props.onTabClick(tabId);
-      await this.wait(2000);
-
-      // Capture the full tab container
-      const el = document.getElementById('__tb__');
-      if (!el) continue;
-
-      // Draw new section page
-      pdf.addPage();
-      const pageNum = pdf.getNumberOfPages();
-      toc.push({ title: titleTxt, page: pageNum });
-
-      // Section header
-      pdf.setFillColor(bg);
-      pdf.rect(0, 0, pw, ph, 'F');
-      pdf.setTextColor(fg);
-      pdf.setFontSize(24);
-      pdf.text(titleTxt, 40, 60);
-
-      // Capture as canvas
-      const canvas = await html2canvas(el, { backgroundColor: null, useCORS: true, scale: 2 });
-      const dataURL = canvas.toDataURL('image/png');
-      const imgW = pw - 80;
-      const imgH = imgW * canvas.height / canvas.width;
-
-      // Fit into page
-      pdf.addImage(dataURL, 'PNG', 40, 90, imgW, imgH);
-    }
-
-    // --- TABLE OF CONTENTS ---
-    pdf.setPage(2);
+    // header
     pdf.setFillColor(bg);
     pdf.rect(0, 0, pw, ph, 'F');
     pdf.setTextColor(fg);
-    pdf.setFontSize(28);
-    pdf.text('Table of Contents', pw / 2, 80, { align: 'center' });
-    pdf.setFontSize(14);
-    let y = 120;
-    toc.forEach(entry => {
-      const dots = '.'.repeat(100);
-      pdf.text(`${entry.title} ${dots} ${entry.page}`, 60, y, { maxWidth: pw - 120 });
-      y += 24;
-    });
+    pdf.setFontSize(24);
+    pdf.text(tabTitle, 40, 60);
 
-    // --- PAGE NUMBERS ---
-    const total = pdf.getNumberOfPages();
-    pdf.setFontSize(10).setTextColor(fg);
-    for (let i = 1; i <= total; i++) {
-      pdf.setPage(i);
-      if (i > 1) pdf.text(`Page ${i} of ${total}`, pw - 60, ph - 30, { align: 'right' });
-    }
-
-    // --- SAVE ---
-    pdf.save(fileName);
+    // capture tab
+    const canvas = await html2canvas(container, { backgroundColor: null, useCORS: true, scale: 2 });
+    const dataURL = canvas.toDataURL('image/png');
+    const iw = pw - 80;
+    const ih = iw * canvas.height / canvas.width;
+    pdf.addImage(dataURL, 'PNG', 40, 90, iw, ih);
   }
 
-  // Utility: load image as HTMLImageElement
-  loadImage(src) {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = reject;
-      img.src = src;
-    });
+  // --- POPULATE TOC ---
+  pdf.setPage(2);
+  pdf.setFillColor(bg);
+  pdf.rect(0, 0, pw, ph, 'F');
+  pdf.setTextColor(fg);
+  pdf.setFontSize(28);
+  pdf.text('Table of Contents', pw / 2, 80, { align: 'center' });
+  pdf.setFontSize(14);
+  let y = 120;
+  toc.forEach(e => {
+    const dots = '.'.repeat(30);
+    pdf.text(`${e.title} ${dots} ${e.page}`, 60, y, { maxWidth: pw - 120 });
+    y += 24;
+  });
+
+  // --- PAGE NUMBERS ---
+  const total = pdf.getNumberOfPages();
+  pdf.setFontSize(10).setTextColor(fg);
+  for (let i = 2; i <= total; i++) {
+    pdf.setPage(i);
+    pdf.text(`Page ${i - 1} of ${total - 1}`, pw - 60, ph - 30, { align: 'right' });
   }
 
-  // Utility: delay
-  wait(ms) {
-    return new Promise(res => setTimeout(res, ms));
-  }
-
-  render() {
-    return (
-      <button onClick={() => this.generatePDF(this.props.options)}>
-        Export PDF
-      </button>
-    );
-  }
+  // --- SAVE PDF ---
+  pdf.save(fileName);
 }
-
-export default PdfGenerator;
