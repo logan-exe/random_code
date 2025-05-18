@@ -2,25 +2,25 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
 /**
- * Generate a professional PDF from specified DOM elements.
+ * Generate a professional PDF from specified dashboard tabs.
  *
  * @param {Object} options
  * @param {string} options.title        - Title for the first page.
  * @param {string} options.orientation  - 'portrait' or 'landscape'.
- * @param {Array<Object>} options.widgetGroups - Array of groups: { tabId, tabName, widgetIds, widgetNames }.
+ * @param {Array} options.tabs          - Array of [tabId, { tabTitle, dashboardItems }].
  * @param {string} [options.fileName='document.pdf'] - Output file name.
  */
 export async function generatePDF({
   title,
   orientation = 'portrait',
-  widgetGroups = [],
-  fileName = 'document.pdf'
+  tabs = [],
+  fileName = 'document.pdf',
 }) {
   // Initialize jsPDF
   const pdf = new jsPDF({
     orientation,
     unit: 'pt',
-    format: 'a4'
+    format: 'a4',
   });
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
@@ -36,50 +36,41 @@ export async function generatePDF({
 
   // --- PLACEHOLDER FOR TOC ---
   pdf.addPage();
-  // We'll come back to populate this page after content
-
-  // Track TOC entries
   const tocEntries = [];
 
-  // --- ADD CONTENT GROUPS ---
-  for (const group of widgetGroups) {
-    const { tabId, tabName, widgetIds, widgetNames } = group;
-    // Start a new page for each tab section
+  // --- ADD CONTENT FOR EACH TAB ---
+  for (const [tabId, tabObj] of tabs) {
+    const { tabTitle, dashboardItems } = tabObj;
     pdf.addPage();
     const startPage = pdf.getNumberOfPages();
+    tocEntries.push({ title: tabTitle, page: startPage });
 
-    // Register TOC entry
-    tocEntries.push({ title: tabName, page: startPage });
-
-    // Fill background
+    // Fill background & header
     pdf.setFillColor(bgColor);
     pdf.rect(0, 0, pageWidth, pageHeight, 'F');
-
-    // Tab header
     pdf.setTextColor(textColor);
     pdf.setFontSize(24);
-    pdf.text(tabName, 40, 60);
+    pdf.text(tabTitle, 40, 60);
 
-    // Position tracker
     let yOffset = 90;
 
-    // Render each widget
-    for (let i = 0; i < widgetIds.length; i++) {
-      const id = widgetIds[i];
-      const name = widgetNames[i] || '';
-      const el = document.getElementById(id);
+    // Render each dashboard item
+    for (const item of dashboardItems) {
+      const key = item.widgetState?.key;
+      const widgetTitle = item.widgetState?.title;
+      const el = document.getElementById(key);
       if (!el) {
-        console.warn(`Element with ID \"${id}\" not found.`);
+        console.warn(`Element with ID "${key}" not found.`);
         continue;
       }
-      // Capture element as image
+
       const canvas = await html2canvas(el, { backgroundColor: null });
       const imgData = canvas.toDataURL('image/png');
-      const imgWidth = pageWidth - 80; // margins
+      const imgWidth = pageWidth - 80;
       const imgRatio = canvas.height / canvas.width;
       const imgHeight = imgWidth * imgRatio;
 
-      // Check for page break
+      // Page break if needed
       if (yOffset + imgHeight > pageHeight - 40) {
         pdf.addPage();
         pdf.setFillColor(bgColor);
@@ -88,13 +79,13 @@ export async function generatePDF({
       }
 
       // Widget title
-      if (name) {
+      if (widgetTitle) {
         pdf.setFontSize(14);
-        pdf.text(name, 40, yOffset);
+        pdf.text(widgetTitle, 40, yOffset);
         yOffset += 20;
       }
 
-      // Add image
+      // Add widget image
       pdf.addImage(imgData, 'PNG', 40, yOffset, imgWidth, imgHeight);
       yOffset += imgHeight + 30;
     }
@@ -119,18 +110,13 @@ export async function generatePDF({
   const totalPages = pdf.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) {
     pdf.setPage(p);
-    if (p > 1) { // Skip title page if desired
+    if (p > 1) {
       pdf.setFontSize(10);
-      pdf.text(
-        `Page ${p} of ${totalPages}`,
-        pageWidth - 60,
-        pageHeight - 30,
-        { align: 'right' }
-      );
+      pdf.text(`Page ${p} of ${totalPages}`, pageWidth - 60, pageHeight - 30, { align: 'right' });
     }
   }
 
-  // Save PDF
+  // Save the PDF
   pdf.save(fileName);
 }
 
