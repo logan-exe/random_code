@@ -2,6 +2,26 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
 /**
+ * Helper: Clone and capture a hidden or styled element via html2canvas.
+ */
+async function captureElement(el) {
+  // Clone node for offscreen rendering
+  const clone = el.cloneNode(true);
+  clone.style.position = 'absolute';
+  clone.style.top = '-9999px';
+  clone.style.left = '-9999px';
+  clone.style.display = 'block';
+  clone.style.visibility = 'visible';
+  document.body.appendChild(clone);
+  try {
+    const canvas = await html2canvas(clone, { backgroundColor: null });
+    return canvas;
+  } finally {
+    document.body.removeChild(clone);
+  }
+}
+
+/**
  * Generate a professional PDF from specified dashboard tabs.
  *
  * @param {Object} options
@@ -38,14 +58,14 @@ export async function generatePDF({
   pdf.addPage();
   const tocEntries = [];
 
-  // --- ADD CONTENT FOR EACH TAB ---
+  // --- ITERATE TABS ---
   for (const [tabId, tabObj] of tabs) {
     const { tabTitle, dashboardItems } = tabObj;
     pdf.addPage();
     const startPage = pdf.getNumberOfPages();
     tocEntries.push({ title: tabTitle, page: startPage });
 
-    // Fill background & header
+    // Background & header
     pdf.setFillColor(bgColor);
     pdf.rect(0, 0, pageWidth, pageHeight, 'F');
     pdf.setTextColor(textColor);
@@ -54,7 +74,7 @@ export async function generatePDF({
 
     let yOffset = 90;
 
-    // Render each dashboard item
+    // Render items
     for (const item of dashboardItems) {
       const key = item.widgetState?.key;
       const widgetTitle = item.widgetState?.title;
@@ -64,13 +84,14 @@ export async function generatePDF({
         continue;
       }
 
-      const canvas = await html2canvas(el, { backgroundColor: null });
+      // Capture via clone to ensure visibility
+      const canvas = await captureElement(el);
       const imgData = canvas.toDataURL('image/png');
       const imgWidth = pageWidth - 80;
       const imgRatio = canvas.height / canvas.width;
       const imgHeight = imgWidth * imgRatio;
 
-      // Page break if needed
+      // Page break
       if (yOffset + imgHeight > pageHeight - 40) {
         pdf.addPage();
         pdf.setFillColor(bgColor);
@@ -78,14 +99,13 @@ export async function generatePDF({
         yOffset = 60;
       }
 
-      // Widget title
+      // Title above widget
       if (widgetTitle) {
         pdf.setFontSize(14);
         pdf.text(widgetTitle, 40, yOffset);
         yOffset += 20;
       }
 
-      // Add widget image
       pdf.addImage(imgData, 'PNG', 40, yOffset, imgWidth, imgHeight);
       yOffset += imgHeight + 30;
     }
@@ -116,7 +136,6 @@ export async function generatePDF({
     }
   }
 
-  // Save the PDF
   pdf.save(fileName);
 }
 
