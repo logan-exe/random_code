@@ -2,9 +2,25 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
 /**
- * Helper: Deep clone an element, including canvases and styles, for accurate capture.
+ * Attempt direct capture of the element by scrolling it into view.
  */
-async function captureElement(el) {
+async function directCapture(el) {
+  // Scroll element into view to ensure rendering
+  el.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+  // Give time for lazy content or charts to render
+  await new Promise(res => setTimeout(res, 500));
+  return await html2canvas(el, {
+    backgroundColor: null,
+    useCORS: true,
+    allowTaint: false,
+    scale: 2,
+  });
+}
+
+/**
+ * Fallback: Deep clone the element off-screen for capture.
+ */
+async function cloneCapture(el) {
   const clone = el.cloneNode(true);
   clone.style.position = 'absolute';
   clone.style.top = '-9999px';
@@ -12,7 +28,7 @@ async function captureElement(el) {
   clone.style.display = 'block';
   clone.style.visibility = 'visible';
 
-  // Copy inline canvas content
+  // Copy canvas content
   const origCanvases = el.querySelectorAll('canvas');
   const cloneCanvases = clone.querySelectorAll('canvas');
   cloneCanvases.forEach((c, i) => {
@@ -33,17 +49,28 @@ async function captureElement(el) {
 
   document.body.appendChild(clone);
   try {
-    const canvas = await html2canvas(clone, {
+    return await html2canvas(clone, {
       backgroundColor: null,
       useCORS: true,
       allowTaint: false,
       windowWidth: clone.scrollWidth,
       windowHeight: clone.scrollHeight,
-      scale: 2
+      scale: 2,
     });
-    return canvas;
   } finally {
     document.body.removeChild(clone);
+  }
+}
+
+/**
+ * Capture element with direct approach, fallback to clone on failure.
+ */
+async function captureElement(el) {
+  try {
+    return await directCapture(el);
+  } catch (err) {
+    console.warn('Direct capture error, falling back to clone:', err);
+    return await cloneCapture(el);
   }
 }
 
@@ -63,104 +90,104 @@ export async function generatePDF({
   fileName = 'document.pdf',
 }) {
   const pdf = new jsPDF({ orientation, unit: 'pt', format: 'a4' });
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-  const bgColor = '#262626';
-  const textColor = '#FFFFFF';
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  const bg = '#262626';
+  const fg = '#FFFFFF';
 
   // Title page
-  pdf.setFillColor(bgColor);
-  pdf.rect(0, 0, pageWidth, pageHeight, 'F');
-  pdf.setTextColor(textColor);
+  pdf.setFillColor(bg);
+  pdf.rect(0, 0, pageW, pageH, 'F');
+  pdf.setTextColor(fg);
   pdf.setFontSize(36);
-  pdf.text(title, pageWidth / 2, pageHeight / 2, { align: 'center' });
+  pdf.text(title, pageW/2, pageH/2, { align: 'center' });
 
   // TOC placeholder
   pdf.addPage();
-  const tocEntries = [];
+  const toc = [];
 
-  // Iterate through tabs
+  // Process each tab
   for (const [tabId, tabObj] of tabs) {
     const { tabTitle, dashboardItems } = tabObj;
     pdf.addPage();
-    const startPage = pdf.getNumberOfPages();
-    tocEntries.push({ title: tabTitle, page: startPage });
+    const pageStart = pdf.getNumberOfPages();
+    toc.push({ title: tabTitle, page: pageStart });
 
-    // Draw background & header
-    pdf.setFillColor(bgColor);
-    pdf.rect(0, 0, pageWidth, pageHeight, 'F');
-    pdf.setTextColor(textColor);
+    // Section header
+    pdf.setFillColor(bg);
+    pdf.rect(0, 0, pageW, pageH, 'F');
+    pdf.setTextColor(fg);
     pdf.setFontSize(24);
     pdf.text(tabTitle, 40, 60);
-    let yOffset = 90;
+    let y = 90;
 
-    // Render each dashboard item
+    // Render each widget
     for (const item of dashboardItems) {
       const key = item.widgetState?.key;
-      const widgetTitle = item.widgetState?.title;
+      const titleTxt = item.widgetState?.title;
       const el = document.getElementById(key);
-      if (!el) continue;
+      if (!el) {
+        console.warn(`Missing element: ${key}`);
+        continue;
+      }
 
-      // Capture element to canvas
+      // Capture to canvas
       const canvas = await captureElement(el);
-      const imgData = canvas.toDataURL('image/png');
+      const data = canvas.toDataURL('image/png');
 
-      // Trigger download of widget image
-      const link = document.createElement('a');
-      link.href = imgData;
-      link.download = `${key}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      // Download widget image
+      const a = document.createElement('a');
+      a.href = data;
+      a.download = `${key}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
 
-      // Calculate dimensions for PDF
-      const imgWidth = pageWidth - 80;
-      const imgHeight = imgWidth * canvas.height / canvas.width;
+      // Compute dimensions
+      const w = pageW - 80;
+      const h = w * canvas.height / canvas.width;
 
-      // Page break if overflow
-      if (yOffset + imgHeight > pageHeight - 40) {
+      // Page break
+      if (y + h > pageH - 40) {
         pdf.addPage();
-        pdf.setFillColor(bgColor);
-        pdf.rect(0, 0, pageWidth, pageHeight, 'F');
-        yOffset = 60;
+        pdf.setFillColor(bg);
+        pdf.rect(0, 0, pageW, pageH, 'F');
+        y = 60;
       }
 
-      // Add widget title
-      if (widgetTitle) {
+      // Widget title
+      if (titleTxt) {
         pdf.setFontSize(14);
-        pdf.text(widgetTitle, 40, yOffset);
-        yOffset += 20;
+        pdf.text(titleTxt, 40, y);
+        y += 20;
       }
-
-      // Insert widget image
-      pdf.addImage(imgData, 'PNG', 40, yOffset, imgWidth, imgHeight);
-      yOffset += imgHeight + 30;
+      pdf.addImage(data, 'PNG', 40, y, w, h);
+      y += h + 30;
     }
   }
 
-  // Populate Table of Contents
+  // Fill TOC
   pdf.setPage(2);
-  pdf.setFillColor(bgColor);
-  pdf.rect(0, 0, pageWidth, pageHeight, 'F');
-  pdf.setTextColor(textColor);
+  pdf.setFillColor(bg);
+  pdf.rect(0, 0, pageW, pageH, 'F');
+  pdf.setTextColor(fg);
   pdf.setFontSize(28);
-  pdf.text('Table of Contents', pageWidth / 2, 80, { align: 'center' });
+  pdf.text('Table of Contents', pageW/2, 80, { align: 'center' });
   pdf.setFontSize(14);
-  let tocY = 120;
-  tocEntries.forEach(e => {
-    pdf.text(e.title, 60, tocY);
-    pdf.text(`${e.page}`, pageWidth - 60, tocY, { align: 'right' });
-    tocY += 24;
+  let yT = 120;
+  toc.forEach(e => {
+    pdf.text(e.title, 60, yT);
+    pdf.text(`${e.page}`, pageW-60, yT, { align: 'right' });
+    yT += 24;
   });
 
-  // Add page numbers
-  const totalPages = pdf.getNumberOfPages();
-  for (let i = 1; i <= totalPages; i++) {
+  // Page numbers
+  const total = pdf.getNumberOfPages();
+  for (let i = 1; i <= total; i++) {
     pdf.setPage(i);
-    if (i > 1) pdf.text(`Page ${i} of ${totalPages}`, pageWidth - 60, pageHeight - 30, { align: 'right' });
+    if (i > 1) pdf.text(`Page ${i} of ${total}`, pageW-60, pageH-30, { align: 'right' });
   }
 
-  // Save final PDF
   pdf.save(fileName);
 }
 
